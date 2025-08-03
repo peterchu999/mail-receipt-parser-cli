@@ -1,0 +1,21 @@
+# Core dependencies
+click>=8.0.0
+pyyaml>=6.0
+sqlite3
+
+# Email handling
+imaplib2>=3.6
+email
+
+# Data processing
+re>=2.2.1
+json>=2.0.9
+datetime
+
+# Testing
+pytest>=7.0.0
+pytest-cov>=4.0.0
+
+# Development
+black>=22.0.0
+flake8>=5.0.0 

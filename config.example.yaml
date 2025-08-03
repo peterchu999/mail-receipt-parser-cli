@@ -1,0 +1,16 @@
+# E-Receipt Parser Configuration
+# Copy this file to config.yaml and modify as needed
+
+email:
+  host: imap.gmail.com
+  port: 993
+  use_ssl: true
+
+database:
+  path: ./receipts.db
+
+parsing:
+  search_terms:
+    - "e-receipt"
+    - "transaction receipt"
+    - "payment confirmation"
