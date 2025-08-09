@@ -9,13 +9,54 @@ import imaplib
 import email
 import re
 from email.header import decode_header
-from datetime import datetime
+from datetime import datetime, timedelta
+
+
+# Email filtering configuration
+EMAIL_FILTERS = {
+    'sender_domains': [
+        # E-wallets & Services
+        'shopee.co.id', 'gojek.com', 'ovo.id', 'dana.id', 'grab.com',
+        'tokopedia.com', 'bukalapak.com', 'blibli.com',
+        
+        # Banks
+        'bca.co.id', 'mandiri.co.id', 'bni.co.id', 'bri.co.id', 'seabank.co.id',
+        'cimb.co.id', 'danamon.co.id',
+        
+        # Payment Gateways
+        'midtrans.com', 'xendit.co', 'doku.com',
+        
+        # Additional common notification domains
+        'noreply@shopee.co.id', 'notification@gojek.com', 'noreply@grab.com',
+    ],
+    
+    'subject_patterns': [
+        # English patterns
+        r'.*receipt.*', r'.*transaction.*', r'.*payment.*',
+        r'.*invoice.*', r'.*billing.*', r'.*purchase.*',
+        r'.*confirmation.*', r'.*statement.*',
+        
+        # Indonesian patterns  
+        r'.*bukti.*', r'.*transaksi.*', r'.*pembayaran.*',
+        r'.*struk.*', r'.*tagihan.*', r'.*pembelian.*',
+        r'.*konfirmasi.*', r'.*laporan.*',
+        
+        # Specific wallet patterns
+        r'.*shopee.*pay.*', r'.*gopay.*', r'.*ovo.*payment.*',
+        r'.*dana.*transfer.*', r'.*linkaja.*'
+    ],
+    
+    'date_range_days': 30  # Only process emails from last 30 days
+}
 
 
 def display_welcome_message():
     """Display welcome message and project status."""
-    print("Hello World! E-Receipt Parser CLI is working!")
-    print("Project structure is ready for development.")
+    print("🧾 E-Receipt Parser CLI v2.0 - Smart Email Filtering!")
+    print("📧 Scanning emails from Indonesian e-wallets and payment services...")
+    print(f"🔍 Configured to filter {len(EMAIL_FILTERS['sender_domains'])} sender domains")
+    print(f"📝 Using {len(EMAIL_FILTERS['subject_patterns'])} subject patterns")
+    print(f"📅 Processing emails from last {EMAIL_FILTERS['date_range_days']} days")
 
 
 def get_email_credentials():
@@ -49,25 +90,131 @@ def connect_to_imap_server(email_address, password):
     return mail
 
 
-def get_latest_emails(mail, max_emails=2):
-    """Get the latest emails from the inbox."""
+def filter_emails_by_sender(mail):
+    """Filter emails by sender domains using IMAP search."""
+    # Calculate date range for filtering
+    cutoff_date = datetime.now() - timedelta(days=EMAIL_FILTERS['date_range_days'])
+    date_str = cutoff_date.strftime("%d-%b-%Y")
+    
+    all_email_ids = set()
+    
+    print(f"\n🔍 Filtering emails by sender domains (since {date_str})...")
+    
+    for domain in EMAIL_FILTERS['sender_domains']:
+        try:
+            
+            # Search for emails from this domain within date range
+            search_criteria = f'(FROM "{domain}" SINCE "{date_str}")'
+            print(f"domain: {domain}, search_criteria: {search_criteria}")
+            status, messages = mail.search(None, search_criteria)
+            
+            if status == 'OK' and messages[0]:
+                domain_emails = messages[0].split()
+                all_email_ids.update(domain_emails)
+                if domain_emails:
+                    print(f"  ✅ Found {len(domain_emails)} emails from {domain}")
+            
+        except Exception as e:
+            print(f"  ⚠️  Error searching {domain}: {e}")
+            continue
+    
+    return list(all_email_ids)
+
+
+def filter_emails_by_subject(mail, email_ids):
+    """Filter emails by subject patterns."""
+    if not email_ids:
+        return []
+    
+    filtered_emails = []
+    print(f"\n🔍 Filtering {len(email_ids)} emails by subject patterns...")
+    
+    for email_id in email_ids:
+        try:
+            # Fetch only the header for subject checking
+            status, msg_data = mail.fetch(email_id, '(BODY[HEADER.FIELDS (SUBJECT)])')
+            
+            if status == 'OK':
+                header_data = msg_data[0][1].decode('utf-8', errors='ignore')
+                
+                # Extract subject
+                subject_match = re.search(r'Subject: (.+)', header_data, re.IGNORECASE)
+                if subject_match:
+                    subject = subject_match.group(1).strip()
+                    
+                    # Check against patterns
+                    for pattern in EMAIL_FILTERS['subject_patterns']:
+                        if re.search(pattern, subject, re.IGNORECASE):
+                            filtered_emails.append(email_id)
+                            print(f"  ✅ Match: {subject[:50]}...")
+                            break
+                            
+        except Exception as e:
+            print(f"  ⚠️  Error checking email {email_id}: {e}")
+            continue
+    
+    return filtered_emails
+
+
+def get_filtered_emails(mail, max_emails=10):
+    """Get filtered emails that are likely e-receipts."""
     # Select inbox
     mail.select('INBOX')
     
-    # Search for all emails
-    status, messages = mail.search(None, 'ALL')
+    # Step 1: Filter by sender domains
+    sender_filtered_emails = filter_emails_by_sender(mail)
     
-    if status != 'OK':
-        raise Exception("Failed to search emails")
+    if not sender_filtered_emails:
+        print("\n❌ No emails found from known e-wallet/payment domains")
+        return []
     
-    # Get the list of email IDs
-    email_ids = messages[0].split()
+    # Step 2: Filter by subject patterns
+    subject_filtered_emails = filter_emails_by_subject(mail, sender_filtered_emails)
     
-    # Get the latest emails (or all if less than max_emails)
-    latest_emails = email_ids[-max_emails:] if len(email_ids) > max_emails else email_ids
+    if not subject_filtered_emails:
+        print("\n❌ No emails found matching receipt subject patterns")
+        return []
     
-    print(f"\n📧 Found {len(latest_emails)} emails to fetch")
-    return latest_emails
+    # Step 3: Limit to max_emails (get most recent)
+    final_emails = subject_filtered_emails[-max_emails:] if len(subject_filtered_emails) > max_emails else subject_filtered_emails
+    
+    print(f"\n📧 Final result: {len(final_emails)} filtered e-receipt emails")
+    print(f"   (from {len(sender_filtered_emails)} sender matches, {len(subject_filtered_emails)} subject matches)")
+    
+    return final_emails
+
+def extract_email_info(email_message):
+    """Extract basic information from an email message."""
+    # Extract subject
+    subject = decode_header(email_message['subject'])[0][0]
+    if isinstance(subject, bytes):
+        subject = subject.decode('utf-8', errors='ignore')
+    
+    # Extract sender and date
+    sender = email_message['from']
+    date = email_message['date']
+    
+    # Get email body content
+    body_content = ""
+    if email_message.is_multipart():
+        for part in email_message.walk():
+            if part.get_content_type() == "text/plain":
+                body_content = part.get_payload(decode=True)
+                break
+    else:
+        body_content = email_message.get_payload(decode=True)
+    
+    # Extract total amount from body
+    total_amount = extract_total_amount(body_content)
+    print(total_amount)
+    
+    return {
+        'subject': subject,
+        'sender': sender,
+        'date': date,
+        'total_amount': total_amount
+    }
+
 
 
 def extract_total_amount(text):
@@ -135,39 +282,6 @@ def extract_total_amount(text):
     return None
 
 
-def extract_email_info(email_message):
-    """Extract basic information from an email message."""
-    # Extract subject
-    subject = decode_header(email_message['subject'])[0][0]
-    if isinstance(subject, bytes):
-        subject = subject.decode('utf-8', errors='ignore')
-    
-    # Extract sender and date
-    sender = email_message['from']
-    date = email_message['date']
-    
-    # Get email body content
-    body_content = ""
-    if email_message.is_multipart():
-        for part in email_message.walk():
-            if part.get_content_type() == "text/plain":
-                body_content = part.get_payload(decode=True)
-                break
-    else:
-        body_content = email_message.get_payload(decode=True)
-    
-    # Extract total amount from body
-    total_amount = extract_total_amount(body_content)
-    print(total_amount)
-    
-    return {
-        'subject': subject,
-        'sender': sender,
-        'date': date,
-        'total_amount': total_amount
-    }
-
-
 def display_email_info(index, email_info):
     """Display formatted email information."""
     print(f"{index:2d}. From: {email_info['sender']}")
@@ -214,11 +328,14 @@ def main():
         # Connect to email server
         mail = connect_to_imap_server(email_address, password)
         
-        # Get latest emails
-        latest_emails = get_latest_emails(mail)
+        # Get filtered e-receipt emails
+        filtered_emails = get_filtered_emails(mail)
         
         # Fetch and display emails
-        fetch_and_display_emails(mail, latest_emails)
+        if filtered_emails:
+            fetch_and_display_emails(mail, filtered_emails)
+        else:
+            print("\n📭 No e-receipt emails found with current filters.")
         
         # Close connection
         mail.logout()
