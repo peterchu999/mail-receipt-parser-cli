@@ -83,22 +83,57 @@ cp config.example.yaml config.yaml
 
 ## ⚙️ Configuration
 
-Create a `config.yaml` file for basic settings:
+The application uses YAML configuration for email filtering settings. You can customize which email domains and subject patterns to process.
+
+### Email Filters Configuration
+
+Edit `config/email_filters.yaml` to customize email filtering:
 
 ```yaml
-email:
-  host: imap.gmail.com
-  port: 993
-  use_ssl: true
+# Email filtering configuration
+sender_domains:
+  # E-wallets & Services
+  - "shopee.co.id"
+  - "gojek.com"
+  - "ovo.id"
+  # Add more domains as needed
 
-database:
-  path: ./receipts.db
+subject_patterns:
+  # English patterns
+  - ".*receipt.*"
+  - ".*transaction.*"
+  # Add more patterns as needed
 
-parsing:
-  search_terms:
-    - "e-receipt"
-    - "transaction receipt"
-    - "payment confirmation"
+settings:
+  date_range_days: 10 # Process emails from last N days
+  max_emails: 1000 # Maximum emails to process
+```
+
+### Configuration Features
+
+- **📝 Easy Editing**: Simple YAML format for easy customization
+- **🔄 Automatic Fallback**: Falls back to hardcoded values if YAML is missing
+- **✅ Validation**: Validates configuration on startup
+- **📊 Statistics**: Shows loaded configuration details
+
+### Adding New Email Providers
+
+To add support for new e-wallet or payment providers:
+
+1. Add their domain to `sender_domains` in `config/email_filters.yaml`
+2. Add relevant subject patterns to `subject_patterns`
+3. Restart the application
+
+Example:
+
+```yaml
+sender_domains:
+  - "new-wallet.com"
+  - "new-bank.co.id"
+
+subject_patterns:
+  - ".*new-wallet.*receipt.*"
+  - ".*new-bank.*transaction.*"
 ```
 
 **Security Note**: Email credentials (username/password) are prompted interactively during CLI execution and are not stored in configuration files for security reasons.

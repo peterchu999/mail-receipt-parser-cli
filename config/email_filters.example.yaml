@@ -1,0 +1,70 @@
+# Email Filters Configuration Example
+# Copy this file to email_filters.yaml and customize for your needs
+
+sender_domains:
+  # E-wallets & Services
+  - "shopee.co.id"
+  - "gojek.com"
+  - "ovo.id"
+  - "dana.id"
+  - "grab.com"
+  - "tokopedia.com"
+  - "bukalapak.com"
+  - "blibli.com"
+
+  # Banks
+  - "bca.co.id"
+  - "mandiri.co.id"
+  - "bni.co.id"
+  - "bri.co.id"
+  - "seabank.co.id"
+  - "cimb.co.id"
+  - "danamon.co.id"
+
+  # Payment Gateways
+  - "midtrans.com"
+  - "xendit.co"
+  - "doku.com"
+
+  # Additional common notification domains
+  - "noreply@shopee.co.id"
+  - "notification@gojek.com"
+  - "noreply@grab.com"
+
+subject_patterns:
+  # English patterns
+  - ".*receipt.*"
+  - ".*transaction.*"
+  - ".*payment.*"
+  - ".*invoice.*"
+  - ".*billing.*"
+  - ".*purchase.*"
+  - ".*confirmation.*"
+  - ".*statement.*"
+
+  # Indonesian patterns
+  - ".*bukti.*"
+  - ".*transaksi.*"
+  - ".*pembayaran.*"
+  - ".*struk.*"
+  - ".*tagihan.*"
+  - ".*pembelian.*"
+  - ".*konfirmasi.*"
+  - ".*laporan.*"
+
+  # Specific wallet patterns
+  - ".*shopee.*pay.*"
+  - ".*gopay.*"
+  - ".*ovo.*payment.*"
+  - ".*dana.*transfer.*"
+  - ".*linkaja.*"
+
+settings:
+  date_range_days: 10 # Process emails from last 10 days
+  max_emails: 1000 # Maximum emails to process per run
+
+# How to customize:
+# 1. Add new email domains to sender_domains
+# 2. Add new subject patterns to subject_patterns
+# 3. Adjust date_range_days to process more/fewer days
+# 4. Adjust max_emails to process more/fewer emails

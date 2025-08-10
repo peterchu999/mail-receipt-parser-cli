@@ -66,3 +66,6 @@ htmlcov/
 *.temp 
 
 *.csv
+
+/config/*.yaml
+!/config/*.example.yaml
