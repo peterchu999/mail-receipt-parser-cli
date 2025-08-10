@@ -8,14 +8,19 @@ import getpass
 import imaplib
 import email
 import re
+import csv
+import html
+import os
 from email.header import decode_header
 from datetime import datetime, timedelta
+from email.utils import parsedate_to_datetime
 
 
 # Email filtering configuration
 EMAIL_FILTERS = {
     'sender_domains': [
         # E-wallets & Services
+        
         'shopee.co.id', 'gojek.com', 'ovo.id', 'dana.id', 'grab.com',
         'tokopedia.com', 'bukalapak.com', 'blibli.com',
         
@@ -46,7 +51,7 @@ EMAIL_FILTERS = {
         r'.*dana.*transfer.*', r'.*linkaja.*'
     ],
     
-    'date_range_days': 30  # Only process emails from last 30 days
+    'date_range_days': 10  # Only process emails from last 30 days
 }
 
 
@@ -105,7 +110,6 @@ def filter_emails_by_sender(mail):
             
             # Search for emails from this domain within date range
             search_criteria = f'(FROM "{domain}" SINCE "{date_str}")'
-            print(f"domain: {domain}, search_criteria: {search_criteria}")
             status, messages = mail.search(None, search_criteria)
             
             if status == 'OK' and messages[0]:
@@ -183,36 +187,123 @@ def get_filtered_emails(mail, max_emails=10):
     
     return final_emails
 
+
+def clean_raw_message(body_content):
+    """Clean raw message by removing HTML tags and normalizing whitespace."""
+    if not body_content:
+        print("Warning: body_content is empty in clean_raw_message")
+        return ""
+    
+    # Convert bytes to string if needed
+    if isinstance(body_content, bytes):
+        body_content = body_content.decode('utf-8', errors='ignore')
+    
+    # Unescape HTML entities first
+    cleaned_text = html.unescape(body_content)
+    
+    # Remove HTML tags using regex
+    cleaned_text = re.sub(r'<[^>]+>', '', cleaned_text)
+    
+    # Remove excessive whitespace and normalize line breaks
+    cleaned_text = re.sub(r'\s+', ' ', cleaned_text)
+    cleaned_text = re.sub(r'\n\s*\n', '\n', cleaned_text)
+    
+    # Strip leading/trailing whitespace
+    cleaned_text = cleaned_text.strip()
+    
+    return cleaned_text
+
+
+def extract_content_from_email_part(part):
+    """Extract content from email part with proper decoding."""
+    try:
+        content = part.get_payload(decode=True)
+        if content:
+            # Handle different encodings
+            if isinstance(content, bytes):
+                # Try different encodings
+                for encoding in ['utf-8', 'iso-8859-1', 'windows-1252']:
+                    try:
+                        return content.decode(encoding)
+                    except (UnicodeDecodeError, AttributeError):
+                        continue
+                # If all fail, use error handling
+                return content.decode('utf-8', errors='ignore')
+            return str(content)
+        return ""
+    except Exception as e:
+        print(f"Error extracting content: {e}")
+        return ""
+
+
 def extract_email_info(email_message):
-    """Extract basic information from an email message."""
+    """Extract complete information from an email message for CSV export."""
     # Extract subject
     subject = decode_header(email_message['subject'])[0][0]
     if isinstance(subject, bytes):
         subject = subject.decode('utf-8', errors='ignore')
     
-    # Extract sender and date
+    # Extract sender (from)
     sender = email_message['from']
-    date = email_message['date']
     
-    # Get email body content
+    # Extract and normalize date to ISO format
+    raw_date = email_message['date']
+    try:
+        # Parse email date and convert to ISO format
+        parsed_date = parsedate_to_datetime(raw_date)
+        normalized_date = parsed_date.strftime('%Y-%m-%d %H:%M:%S')
+    except:
+        # Fallback to raw date if parsing fails
+        normalized_date = raw_date
+    
+    # Extract unique email ID (Message-ID)
+    email_id = email_message['Message-ID'] or f"no-id-{hash(str(email_message))}"
+    
+    # Get email body content with robust extraction
     body_content = ""
+    
     if email_message.is_multipart():
+        text_parts = []
+        html_parts = []
+        
         for part in email_message.walk():
-            if part.get_content_type() == "text/plain":
-                body_content = part.get_payload(decode=True)
-                break
+            content_type = part.get_content_type()
+            
+            if content_type == "text/plain":
+                content = extract_content_from_email_part(part)
+                if content.strip():  # Only add non-empty content
+                    text_parts.append(content)
+                    
+            elif content_type == "text/html":
+                content = extract_content_from_email_part(part)
+                if content.strip():  # Only add non-empty content
+                    html_parts.append(content)
+                    
+        # Prefer text/plain, fallback to text/html
+        if text_parts:
+            body_content = "\n".join(text_parts)
+        elif html_parts:
+            body_content = "\n".join(html_parts)
+        else:
+            print("No text/plain or text/html parts found")
+            
     else:
-        body_content = email_message.get_payload(decode=True)
+        # Single part email
+        body_content = extract_content_from_email_part(email_message)
+    
+    # Clean raw message content
+    raw_message = clean_raw_message(body_content)
     
     # Extract total amount from body
     total_amount = extract_total_amount(body_content)
-    print(total_amount)
     
     return {
+        'from': sender,
         'subject': subject,
-        'sender': sender,
-        'date': date,
-        'total_amount': total_amount
+        'date': normalized_date,
+        'total_amount': total_amount if total_amount is not None else 0.0,
+        'email_id': email_id,
+        'raw': raw_message
     }
 
 
@@ -236,6 +327,9 @@ def extract_total_amount(text):
         r'total\s*:?\s*Rp\s*([\d.,]+)',  # total: Rp 123.456, total Rp 123.456
         r'Total\s*:?\s*Rp\s*([\d.,]+)',  # Total: Rp 123.456, Total Rp 123.456
         r'TOTAL\s*:?\s*Rp\s*([\d.,]+)',  # TOTAL: Rp 123.456, TOTAL Rp 123.456
+        r'total\s+paid\s*:?\s*Rp\s*([\d.,]+)',  # Total Paid: Rp 123.456, total paid Rp 123.456
+        r'Total\s+Paid\s*:?\s*Rp\s*([\d.,]+)',  # Total Paid: Rp 123.456, Total Paid Rp 123.456
+        r'TOTAL\s+PAID\s*:?\s*Rp\s*([\d.,]+)',  # TOTAL PAID: Rp 123.456, TOTAL PAID Rp 123.456
         r'Rp\s*([\d.,]+)\s*\(?total\)?',  # Rp 123.456 total, Rp 123.456 (total)
         r'amount\s*:?\s*Rp\s*([\d.,]+)',  # amount: Rp 123.456
         r'Amount\s*:?\s*Rp\s*([\d.,]+)',  # Amount: Rp 123.456
@@ -284,12 +378,13 @@ def extract_total_amount(text):
 
 def display_email_info(index, email_info):
     """Display formatted email information."""
-    print(f"{index:2d}. From: {email_info['sender']}")
+    print(f"{index:2d}. From: {email_info['from']}")
     print(f"    Subject: {email_info['subject']}")
     print(f"    Date: {email_info['date']}")
+    print(f"    Email ID: {email_info['email_id'][:50]}...")  # Truncate long IDs
     
     # Display total amount if found
-    if email_info.get('total_amount') is not None:
+    if email_info.get('total_amount') and email_info['total_amount'] > 0:
         print(f"    💰 Total Amount: Rp {email_info['total_amount']:,.0f}")
     else:
         print(f"    💰 Total Amount: Not found")
@@ -316,6 +411,67 @@ def fetch_and_display_emails(mail, email_ids):
             print(f"    {'-'*50}")
 
 
+def save_emails_to_csv(email_records, filename='receipts.csv'):
+    """Save email records to CSV file with proper headers."""
+    if not email_records:
+        print("⚠️  No email records to save")
+        return False
+    
+    # Define CSV headers in the correct order
+    fieldnames = ['from', 'subject', 'date', 'total_amount', 'email_id', 'raw']
+    
+    try:
+        # Check if file exists to determine if we need headers
+        file_exists = os.path.exists(filename)
+        
+        with open(filename, 'a', newline='', encoding='utf-8') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            
+            # Write header only if file is new
+            if not file_exists:
+                writer.writeheader()
+                print(f"📄 Created new CSV file: {filename}")
+            
+            # Write email records
+            for record in email_records:
+                # Ensure all required fields are present
+                csv_record = {field: record.get(field, '') for field in fieldnames}
+                writer.writerow(csv_record)
+            
+            print(f"💾 Successfully saved {len(email_records)} email records to {filename}")
+            return True
+            
+    except Exception as e:
+        print(f"❌ Error saving to CSV: {e}")
+        return False
+
+
+def process_emails_batch(mail, email_ids):
+    """Process emails in batch and return structured data for CSV export."""
+    email_records = []
+    
+    print(f"\n📊 Processing {len(email_ids)} emails for data extraction...")
+    
+    for i, email_id in enumerate(email_ids, 1):
+        try:
+            # Fetch email data
+            status, msg_data = mail.fetch(email_id, '(RFC822)')
+            
+            if status == 'OK':
+                email_message = email.message_from_bytes(msg_data[0][1])
+                email_info = extract_email_info(email_message)
+                email_records.append(email_info)
+                
+                # Display progress (keep existing display functionality)
+                display_email_info(i, email_info)
+                
+        except Exception as e:
+            print(f"{i:2d}. Error processing email: {e}")
+            print(f"    {'-'*50}")
+    
+    return email_records
+
+
 def main():
     """Main function orchestrating the email fetching process."""
     try:
@@ -324,16 +480,22 @@ def main():
         
         # Get user credentials
         email_address, password = get_email_credentials()
-        
         # Connect to email server
         mail = connect_to_imap_server(email_address, password)
         
         # Get filtered e-receipt emails
-        filtered_emails = get_filtered_emails(mail)
+        filtered_emails = get_filtered_emails(mail, 1000)
         
-        # Fetch and display emails
+        # Process emails and save to CSV
         if filtered_emails:
-            fetch_and_display_emails(mail, filtered_emails)
+            # Batch process emails for data extraction
+            email_records = process_emails_batch(mail, filtered_emails)
+            
+            # Save to CSV
+            if email_records:
+                save_emails_to_csv(email_records)
+            else:
+                print("\n⚠️  No valid email records extracted for CSV export")
         else:
             print("\n📭 No e-receipt emails found with current filters.")
         
