@@ -2,6 +2,7 @@ import re
 import html
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
+from datetime import timezone, timedelta
 
 
 class EmailParser:
@@ -58,6 +59,8 @@ class EmailParser:
     
     def extract_email_info(self, email_message):
         """Extract complete information from an email message for CSV export."""
+        email_id = email_message['Message-ID'] or f"no-id-{hash(str(email_message))}"
+
         # Extract subject
         subject = decode_header(email_message['subject'])[0][0]
         if isinstance(subject, bytes):
@@ -71,9 +74,17 @@ class EmailParser:
         try:
             # Parse email date and convert to ISO format
             parsed_date = parsedate_to_datetime(raw_date)
+            
+             # Convert to GMT+7 (Bangkok, Jakarta, Hanoi, etc.)
+            gmt_plus_7 = timezone(timedelta(hours=7))
+            parsed_date = parsed_date.astimezone(gmt_plus_7)
+
+            print(f"Parsed date (GMT+7): {parsed_date} | raw_date: {raw_date}")
+            
             normalized_date = parsed_date.strftime('%Y-%m-%d %H:%M:%S')
-        except:
+        except Exception as e:
             # Fallback to raw date if parsing fails
+            print(f"Warning: Failed to parse date: {raw_date} for email {email_id}. Error: {e}")
             normalized_date = raw_date
         
         # Extract unique email ID (Message-ID)

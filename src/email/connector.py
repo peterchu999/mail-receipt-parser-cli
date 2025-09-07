@@ -1,5 +1,4 @@
 import imaplib
-import getpass
 
 
 class EmailConnector:
